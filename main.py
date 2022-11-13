@@ -2,29 +2,21 @@ from mido import MidiFile
 import pandas as pd
 import glob
 import re
-from progress.bar import IncrementalBar
-
+import numpy as np
 
 class Validation_config(object):
     """ Конфигуратор для валидатора, доработать при надобности """
     min_track_duration = 0
-    min_required_instruments_from_top = 3
+    min_required_instruments_from_top = 1
 
 
-class MidiAnalyzer(object):
+class MidiDF_collector(object):
     """
-        Класс проводит валидацию миди файлов, лежащих в дочерней категории.
+        Класс для сбора информации о MIDI - файлах в виде единого DF
     """
-    min_track_duration = 0;
-    min_required_instruments_from_top = 0;
-    all_midi = [];
-
-    def __init__(self, validator_config):
-        self.min_track_duration = validator_config.min_track_duration
-        self.min_required_instruments_from_top = validator_config.min_required_instruments_from_top
-        self.all_midi = self.__parse_child_directories()
-
-    def __parse_child_directories(self):
+    @staticmethod
+    def __parse_child_directories():
+        """Парсит список всех midi файлов в дочерних директориях проекта"""
         files = []
         for file in glob.glob('**/*.mid', recursive=True):
             files.append(file)
@@ -32,6 +24,7 @@ class MidiAnalyzer(object):
 
     @staticmethod
     def __parse_instruments(midi_file):
+        """Для миди-файла выводит список уникальных инструментов (в виде id)"""
         id_instruments = []
         midi_file = MidiFile(midi_file, clip=True)
         for msg in midi_file:
@@ -39,33 +32,70 @@ class MidiAnalyzer(object):
                 id_instruments.append(re.findall(r'\d+', str(msg))[0])
         return list(set(id_instruments))
 
-    def midi_info_collector(self):
+    @staticmethod
+    def return_midi_df():
         """Проходит по всем дочерним папкам, собирает информацию по каждому из треков """
         midi_df = pd.DataFrame({'midi_file' : [],
                                 'instruments_amount' : [],
                                 'instruments_ids' : []})
 
-
-        bar = IncrementalBar('Countdown', max=len(self.all_midi))
-        import time
-        fs = time.time()
-        for midi in self.all_midi:
-            bar.next()
-            instruments = self.__parse_instruments(midi)
+        for midi in MidiDF_collector.__parse_child_directories():
+            instruments = MidiDF_collector.__parse_instruments(midi)
             new_row = pd.Series({'midi_file' : midi,
                                 'instruments_amount' : len(instruments),
                                 'instruments_ids' : instruments})
 
             midi_df = pd.concat([midi_df, new_row.to_frame().T], ignore_index=True)
-
-        bar.finish()
         return midi_df
 
+
+
+class MidiDF_Analyzer(object):
+    """Класс для анализа и валидации MIDI - треков"""
+    min_track_duration = None
+    min_required_instruments_from_top = None
+    midi_df = None
+
+    def __init__(self, validator_config, midies_df):
+        self.min_track_duration = validator_config.min_track_duration
+        self.min_required_instruments_from_top = validator_config.min_required_instruments_from_top
+        self.midies_df = midies_df
+
+
+    def get_top_instruments(self):
+        all_instrument_occurence = np.array(self.midies_df['instruments_ids'].sum())
+        unique = np.unique(all_instrument_occurence)
+        return unique[:self.min_required_instruments_from_top]
+
+    def get_valid_midies(self):
+        # Первичная фильтрация по количеству инструментов
+        filtered_df = self.midi_df[self.midi_df["instruments_amount"] >= self.min_required_instruments_from_top]
+        top_instruments = MidiDF_Analyzer.get_top_instruments(self)
+
+        # Вторичная фильтрация по наличию инструментов из топа
+        filtered_df['matches_amount'] = MidiDF_Analyzer.__intersect_instruments(filtered_df['instruments_ids'], top_instruments)
+        filtered_df = filtered_df[filtered_df['matches_amount'] >= self.min_required_instruments_from_top]
+        return filtered_df
+
+    @staticmethod
+    def __intersect_instruments(instrument_series, top_instruments):
+        top_instruments = set(top_instruments)
+        return pd.Series([len(set.intersection(x,top_instruments)) for x in instrument_series.apply(set)])
+
 def main():
-    config = Validation_config()
-    analyzer = MidiAnalyzer(config)
-    midies_df = analyzer.midi_info_collector()
+    try:
+        midies_df = pd.read_pickle('midie_df')
+        print("Midies_df from project directory")
+
+    except:
+        print("Midies_df not found in project directory")
+        config = Validation_config()
+        midies_df = MidiDF_collector.return_midi_df()
+        midies_df.to_pickle('midies_df')
+
     print(midies_df)
+
+    
 
 if __name__ == '__main__':
     main()
