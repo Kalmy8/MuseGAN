@@ -33,17 +33,35 @@ class MidiDF_collector(object):
         return list(set(id_instruments))
 
     @staticmethod
+    def __parse_instruments_names(midi_file):
+        """Для миди-файла выводит список уникальных инструментов (в виде id)"""
+        names_instruments = []
+        midi_file = MidiFile(midi_file, clip=True)
+        for msg in midi_file:
+            if msg.type == 'track_name':
+                names_instruments.append(str(msg.name))
+        return list(set(names_instruments))
+
+
+    @staticmethod
     def return_midi_df():
         """Проходит по всем дочерним папкам, собирает информацию по каждому из треков """
         midi_df = pd.DataFrame({'midi_file' : [],
                                 'instruments_amount' : [],
-                                'instruments_ids' : []})
+                                'instruments_ids' : [],
+                                'instruments_names': [],
+                                'duration (sec)': [] })
 
         for midi in MidiDF_collector.__parse_child_directories():
+            some_md = MidiFile(midi, clip = True)
             instruments = MidiDF_collector.__parse_instruments(midi)
+            instruments_names = MidiDF_collector.__parse_instruments_names(midi)
+
             new_row = pd.Series({'midi_file' : midi,
                                 'instruments_amount' : len(instruments),
-                                'instruments_ids' : instruments})
+                                'instruments_ids' : instruments,
+                                'instruments_names': instruments_names,
+                                'duration (sec)' : some_md.length})
 
             midi_df = pd.concat([midi_df, new_row.to_frame().T], ignore_index=True)
         return midi_df
@@ -63,11 +81,14 @@ class MidiDF_Analyzer(object):
 
 
     def get_top_instruments(self):
+        """Выводит id из топа самых популярных инструментов"""
+
         all_instrument_occurence = np.array(self.midies_df['instruments_ids'].sum())
         unique = np.unique(all_instrument_occurence)
         return unique[:self.min_required_instruments_from_top]
 
     def get_valid_midies(self):
+        """Используя конфигуратор, фильтрует исходный midi датафрейм, оставляя только валидные файлы"""
         # Первичная фильтрация по количеству инструментов
         filtered_df = self.midi_df[self.midi_df["instruments_amount"] >= self.min_required_instruments_from_top]
         top_instruments = MidiDF_Analyzer.get_top_instruments(self)
@@ -93,9 +114,9 @@ def main():
         midies_df = MidiDF_collector.return_midi_df()
         midies_df.to_pickle('midies_df')
 
-    print(midies_df)
-
-    
+    print(midies_df[midies_df['instruments_ids'].apply(len) > 2])
+    midi_file = MidiFile('autumn5[1].mid', clip=True)
+    print(midi_file)
 
 if __name__ == '__main__':
     main()
